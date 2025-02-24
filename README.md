@@ -4,12 +4,16 @@ Open Bucket Browser is a lightweight web interface designed to navigate and expl
 
 It fetches all bucket content beyond the default 1000-item limit, organizes files into a user-friendly folder structure, and lets you copy the complete URL of any file with a single click.
 
+## Screenshot
+<img src="https://raw.githubusercontent.com/r3vit/open-bucket-browser/refs/heads/main/screenshot.png" width="400" height="400">
+
+
 ## Features
 
 - **Navigation:** browse bucket contents organized in a nested folder structure.
 - **File Type Icons:** icons for images, videos, JSON/text, and database files.
 - **Copy URL on Click:** clicking a file copies its full URL to the clipboard for easy sharing.
-- **Complete Data Retrieval:** Handles multiple pages of S3 listings to display all available files (not just your first 1000s).
+- **Complete Data Retrieval:** handles multiple pages of S3 listings to display all available files (not just your first 1000s).
 
 ## How to Use
 
