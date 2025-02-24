@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>S3 Bucket Browser</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    ul {
+      list-style-type: none;
+      padding-left: 20px;
+    }
+    li {
+      cursor: pointer;
+      margin: 5px 0;
+    }
+    .hidden {
+      display: none;
+    }
+    #bucketInputContainer {
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>S3 Bucket Browser</h1>
+  <div id="bucketInputContainer">
+    <input type="text" id="bucketUrlInput" placeholder="Enter open S3 bucket URL" size="50">
+    <button id="loadButton">Load Bucket</button>
+  </div>
+  <div id="file-tree">Please enter a bucket URL and click "Load Bucket".</div>
+
+  <script>
+    // Global bucket URL variable.
+    let bucketUrl = "";
+
+    // Return an icon based on file extension.
+    function getFileIcon(fileName) {
+      const dotIndex = fileName.lastIndexOf('.');
+      const ext = dotIndex >= 0 ? fileName.slice(dotIndex + 1).toLowerCase() : '';
+      if (["jpg", "jpeg", "png", "gif", "svg", "webp"].includes(ext)) {
+        return "🖼️";
+      } else if (["mp4", "mov", "avi", "mkv", "webm"].includes(ext)) {
+        return "🎥";
+      } else if (ext === "json" || ext === "txt") {
+        return "📝";
+      } else if (["db", "sqlite", "sqlite3"].includes(ext)) {
+        return "💾";
+      }
+      return "📄";
+    }
+
+    // Parse XML string into a DOM Document.
+    function parseXML(xmlText) {
+      const parser = new DOMParser();
+      return parser.parseFromString(xmlText, "application/xml");
+    }
+
+    // Fetch all pages from the bucket until IsTruncated is false.
+    async function fetchAllBucketContents() {
+      let marker = null;
+      let allContents = [];
+      let isTruncated = true;
+
+      while (isTruncated) {
+        let url = bucketUrl;
+        if (marker) {
+          url += (bucketUrl.includes('?') ? '&' : '/?') + 'marker=' + encodeURIComponent(marker);
+        }
+        try {
+          const response = await fetch(url);
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          const xmlText = await response.text();
+          const xmlDoc = parseXML(xmlText);
+
+          // Extract <Contents> elements.
+          const contents = xmlDoc.getElementsByTagName("Contents");
+          for (let i = 0; i < contents.length; i++) {
+            allContents.push(contents[i]);
+          }
+
+          // Check if the listing is truncated.
+          const isTruncatedElem = xmlDoc.getElementsByTagName("IsTruncated")[0];
+          isTruncated = isTruncatedElem && isTruncatedElem.textContent.trim() === "true";
+
+          // Use the last key as marker for the next request.
+          if (isTruncated && contents.length > 0) {
+            const lastContent = contents[contents.length - 1];
+            marker = lastContent.getElementsByTagName("Key")[0].textContent;
+          }
+        } catch (error) {
+          console.error("Error fetching bucket XML:", error);
+          document.getElementById('file-tree').innerText = "Error loading bucket data.";
+          break;
+        }
+      }
+      return allContents;
+    }
+
+    // Build a nested tree object from the list of XML <Contents> nodes.
+    // Each file node stores its full key in __fullKey.
+    function buildTreeFromContents(contentsArray) {
+      const tree = {};
+      contentsArray.forEach(content => {
+        const keyElem = content.getElementsByTagName("Key")[0];
+        if (!keyElem) return;
+        const key = keyElem.textContent;
+        const parts = key.split('/').filter(part => part !== "");
+        let current = tree;
+        const isFolder = key.endsWith("/");
+        parts.forEach((part, index) => {
+          if (!current[part]) {
+            current[part] = { __children: {}, __isFile: false };
+          }
+          // Mark as file if this is the last part and the key doesn't end with "/".
+          if (index === parts.length - 1 && !isFolder) {
+            current[part].__isFile = true;
+            current[part].__fullKey = key;
+          }
+          current = current[part].__children;
+        });
+      });
+      return tree;
+    }
+
+    // Recursively render the tree structure as nested lists.
+    // The `currentPath` parameter holds the relative path from the bucket root.
+    function renderTree(tree, parentElement) {
+      const ul = document.createElement("ul");
+      for (let name in tree) {
+        const li = document.createElement("li");
+
+        // Create an icon span.
+        const iconSpan = document.createElement("span");
+        iconSpan.style.marginRight = "5px";
+        if (tree[name].__isFile) {
+          iconSpan.textContent = getFileIcon(name);
+        } else {
+          iconSpan.textContent = "📁";
+        }
+        li.appendChild(iconSpan);
+
+        // Append the file or folder name.
+        const textSpan = document.createElement("span");
+        textSpan.textContent = name;
+        li.appendChild(textSpan);
+
+        if (tree[name].__isFile) {
+          // On click of a file, copy the complete URL to the clipboard.
+          li.addEventListener("click", function(e) {
+            e.stopPropagation();
+            const fullKey = tree[name].__fullKey;
+            const fileUrl = bucketUrl + "/" + fullKey;
+            navigator.clipboard.writeText(fileUrl).then(() => {
+              alert("Copied to clipboard:\n" + fileUrl);
+            }).catch((err) => {
+              console.error("Failed to copy text: ", err);
+            });
+          });
+        } else {
+          // For folders, toggle the display of children.
+          li.addEventListener("click", function(e) {
+            e.stopPropagation();
+            const childUl = this.querySelector("ul");
+            if (childUl) {
+              childUl.classList.toggle("hidden");
+            }
+          });
+        }
+
+        // Recursively render children if available.
+        if (Object.keys(tree[name].__children).length > 0) {
+          renderTree(tree[name].__children, li);
+        }
+        ul.appendChild(li);
+      }
+      parentElement.appendChild(ul);
+    }
+
+    // Main function to load the bucket contents and display the navigable tree.
+    async function loadBucket() {
+      const container = document.getElementById("file-tree");
+      container.innerHTML = "Loading bucket data...";
+      const contentsArray = await fetchAllBucketContents();
+      if (!contentsArray || contentsArray.length === 0) {
+        container.innerText = "No bucket contents found.";
+        return;
+      }
+      const tree = buildTreeFromContents(contentsArray);
+      container.innerHTML = ""; // Clear the loading message.
+      renderTree(tree, container);
+    }
+
+    // Event listener for the load button.
+    document.getElementById("loadButton").addEventListener("click", function() {
+      const input = document.getElementById("bucketUrlInput").value.trim();
+      if (input === "") {
+        alert("Please enter a valid S3 bucket URL.");
+        return;
+      }
+      // Normalize the URL (remove trailing slash).
+      bucketUrl = input.replace(/\/+$/, "");
+      loadBucket();
+    });
+  </script>
+</body>
+</html>
